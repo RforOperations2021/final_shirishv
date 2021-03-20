@@ -10,6 +10,11 @@ library(shinythemes)
 library(tools)
 library(stringr)
 library(randomcoloR)
+library(leaflet)
+library(leaflet.extras)
+library(rgdal)
+library(shinyjs)
+library(rgeos)
 
 # setting working directory
 # setwd("C:/Users/shiri/Dropbox/CMU - 4th sem/R Shiny/final_shirishv")
@@ -40,6 +45,8 @@ ui <- navbarPage("Allegheny County 911 EMS Dashboard",
                                           label = "Select priority type for Plot 1:",
                                           choices = unique(sort(ems$priority)),
                                           selected = c("E0")),
+                              
+                              h6("*check glossary for the meanings of priority codes"),
 
                               # Select city for overtime trend
                               selectInput(inputId = "city",
@@ -72,7 +79,8 @@ ui <- navbarPage("Allegheny County 911 EMS Dashboard",
                                           tabPanel("Plot 2: Overtime trend in the selected city",
                                                    tabsetPanel(tabPanel("Plot", plotlyOutput("lineplot")),
                                                                tabPanel("Data table", DT::dataTableOutput("city.table"),
-                                                                        downloadButton("download_dt_2", "Download data"))))
+                                                                        downloadButton("download_dt_2", "Download data")))),
+                                          tabPanel("Glossary", verbatimTextOutput("glossary"))
                                           )
                             )
                           )
@@ -84,6 +92,11 @@ ui <- navbarPage("Allegheny County 911 EMS Dashboard",
                                h4(strong("User Inputs")),
                                hr(style = "border-top: 1px solid #000000;"),
                                
+                               # Type of map
+                               radioButtons("maptype",
+                                            "Select type of map:",
+                                            choices = c("Marker", "Heatmap"),
+                                            selected = "Marker"),
                                # Select year
                                selectInput("year_multi",
                                            "Year(s):",
@@ -216,6 +229,26 @@ server <- function(input, output, session) {
             legend.background = element_rect(fill = "lightgray"))
   })
   
+  # Glossary
+  output$glossary <- renderText({paste0("Following are the meanings of the priority type codes:",
+                                        "\n\n2A: 2nd Alarm Fire  (residential, commercial, tunnel)",
+                                        "\nE0: EMS Advanced Life Support life threatening response with Advanced Life Support backup",
+                                        "\nE1: EMS Advanced Life Support life threatening response",
+                                        "\nE2: EMS Standard Advanced Life Support response",
+                                        "\nE3: EMS Standard Basic Life Support response",
+                                        "\nE4: EMS Basic Life Support Assistance response (i.e. lift assist)",
+                                        "\nE5: All administrative mark outs",
+                                        "\nF1: Potential to become a threat to life safety.",
+                                        "\nF2: Incidents actively occurring or that has just occurred with no immediate threat to life.",
+                                        "\nF3: No threat to life safety.",
+                                        "\nF4: All notification only calls types.",
+                                        "\nHR: High-rise plan: 1 alarm fire that automatically goes to 3 alarms for very tall buildings",
+                                        "\nM1: EMS Mass Casualty Plan - Level 1 (lowest)",
+                                        "\nM2: EMS Mass Casualty Plan - Level 2",
+                                        "\nM3: EMS Mass Casualty Plan - Level 3",
+                                        "\nM4: EMS Mass Casualty Plan - Level 4 (highest response, most ambulances)",
+                                        "\nP1: Police reponse; likely not dispatched as EMS/Fire, just recorded in CAD system")})
+  
   # if-else function to check all priority codes
   observe({
     if(input$selectall == 0) return(NULL) 
@@ -237,6 +270,7 @@ server <- function(input, output, session) {
   
   # creating subset for the map
   mapinput <- reactive({
+    req(input$year_multi, input$priorities)
     # Selected years
     if (length(input$year_multi) > 0) {
     map_filter <- subset(ems, call_year %in% input$year_multi)
@@ -245,10 +279,8 @@ server <- function(input, output, session) {
     if (length(input$priorities) > 0) {
       map_filter <- subset(map_filter, priority %in% input$priorities)
     }
-    # randomly sampling 500 points
-    if(length(map_filter) > 1000) {
-      map_filter <- sample_n(map_filter,1000) 
-    }
+    map_filter <- map_filter[complete.cases(map_filter), ]
+
     return(map_filter)
   })
   
@@ -259,7 +291,7 @@ server <- function(input, output, session) {
       addTiles(urlTemplate = "http://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", 
                attribution = "Google", group = "Google") %>%
       addProviderTiles("Stamen.Toner", group = "Toner") %>%
-      setView(-79.9800, 40.4700, 9) %>%
+      setView(-79.9800, 40.4700, 10) %>%
       addLayersControl(baseGroups = c("Google", "Toner"))
   })
   
@@ -269,15 +301,33 @@ server <- function(input, output, session) {
   
   # Replace layer with filtered data
   observe({
+    req(input$year_multi, input$priorities)
     map_data <- mapinput()
-    leafletProxy("leaflet", data = map_data) %>%
-      clearMarkers() %>%
-      clearGroup(group = "map_data") %>%
-      addCircleMarkers(lng = ~census_block_group_center__x,
-                       lat = ~census_block_group_center__y, radius = 1.5,
-                       color = ~pal(priority), group = "map_data") %>%
-      addLegend(position = "bottomright" , pal = pal, values = ems$priority, title = "Priority type")
+    if(input$maptype == "Marker"){
+      leafletProxy("leaflet", data = map_data) %>%
+        clearMarkers() %>%
+        clearHeatmap() %>%
+        clearControls() %>%
+        clearGroup(group = "map_data") %>%
+        addCircleMarkers(lng = ~census_block_group_center__x,
+                         lat = ~census_block_group_center__y, radius = 2,
+                         popup = ~paste0("<b>", city_name, " (", call_year, ")", "</b>: ", priority),
+                         color = ~pal(priority), group = "map_data",
+                         clusterOptions = markerClusterOptions()) %>%
+        addLegend(position = "bottomright" , pal = pal, values = ems$priority, title = "Priority type")
+    }
+    else {
+      leafletProxy("leaflet", data = map_data) %>%
+        clearMarkers() %>%
+        clearHeatmap() %>%
+        clearControls() %>%
+        clearGroup(group = "map_data") %>%
+        addHeatmap(lng = ~census_block_group_center__x,
+                   lat = ~census_block_group_center__y, radius = 8,
+                   group = "map_data")
+    }
   })
+  
   
   # Raw Data table ----------------------------------------------
   output$raw.table <- DT::renderDataTable({ems[2:13]}, options = list(scrollX = TRUE))
