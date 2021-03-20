@@ -16,8 +16,6 @@ library(rgdal)
 library(shinyjs)
 library(rgeos)
 
-# setting working directory
-# setwd("C:/Users/shiri/Dropbox/CMU - 4th sem/R Shiny/final_shirishv")
 
 # loading 911 dataset
 ems <- read.csv("911_ems_dispatches.csv")
@@ -25,9 +23,6 @@ ems$city_name <- str_to_title(ems$city_name)
 
 # To avoid plotly issues ----------------------------------------------
 pdf(NULL)
-
-# Application title ----------------------------------------------
-# header <- dashboardHeader(title = "Allegheny County 911 EMS Dashboard", titleWidth = 400)
 
 # Define UI for application
 ui <- navbarPage("Allegheny County 911 EMS Dashboard",
@@ -270,15 +265,22 @@ server <- function(input, output, session) {
   
   # creating subset for the map
   mapinput <- reactive({
-    req(input$year_multi, input$priorities)
+    # req(input$year_multi, input$priorities)
     # Selected years
     if (length(input$year_multi) > 0) {
-    map_filter <- subset(ems, call_year %in% input$year_multi)
+      map_filter <- subset(ems, call_year %in% input$year_multi)
+    }
+    else {
+      map_filter <- ems[FALSE,]  
     }
     # Priority types
     if (length(input$priorities) > 0) {
       map_filter <- subset(map_filter, priority %in% input$priorities)
     }
+    else{
+      map_filter <- ems[FALSE,]
+    }
+    
     map_filter <- map_filter[complete.cases(map_filter), ]
 
     return(map_filter)
@@ -301,7 +303,6 @@ server <- function(input, output, session) {
   
   # Replace layer with filtered data
   observe({
-    req(input$year_multi, input$priorities)
     map_data <- mapinput()
     if(input$maptype == "Marker"){
       leafletProxy("leaflet", data = map_data) %>%
